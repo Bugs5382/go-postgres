@@ -1,0 +1,91 @@
+package postgres_test
+
+/*
+MIT License
+
+Copyright (c) 2026 Shane
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+*/
+
+import (
+	"context"
+	"log"
+	"time"
+
+	postgres "github.com/Bugs5382/go-postgres"
+	"github.com/jackc/pgx/v5"
+)
+
+// Connect to a server with the resilient defaults, then query through the
+// underlying pgx pool.
+func ExampleNew() {
+	ctx := context.Background()
+
+	db, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/acme")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	var now time.Time
+	if err := db.Pool().QueryRow(ctx, "SELECT now()").Scan(&now); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Tune the pool and the transaction retry policy through functional options.
+func ExampleNew_options() {
+	ctx := context.Background()
+
+	db, err := postgres.New(ctx,
+		"postgres://user:pass@localhost:5432/acme",
+		postgres.WithMaxConns(50),
+		postgres.WithConnectTimeout(5*time.Second),
+		postgres.WithHealthCheckPeriod(time.Minute),
+		postgres.WithTxRetry(10, 5*time.Millisecond, time.Second),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+}
+
+// RunInTx retries automatically on serialization failures, which are expected
+// under Serializable isolation. fn must be safe to run more than once.
+func ExampleDB_RunInTx() {
+	ctx := context.Background()
+
+	db, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/acme")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	err = db.RunInTx(ctx, func(tx pgx.Tx) error {
+		var balance int
+		if err := tx.QueryRow(ctx, "SELECT balance FROM accounts WHERE id = $1", 1).Scan(&balance); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "UPDATE accounts SET balance = $1 WHERE id = $2", balance-100, 1)
+		return err
+	}, postgres.WithIsolation(pgx.Serializable))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
