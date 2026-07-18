@@ -31,7 +31,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const testDSN = "postgres://user:pass@localhost:5432/acme"
+const testDSN = "postgres://acme@localhost:5432/acme"
 
 // apply builds a config from defaults and the given options, as New does.
 func apply(opts ...Option) config {
