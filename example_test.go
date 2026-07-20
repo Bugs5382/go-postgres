@@ -89,3 +89,24 @@ func ExampleDB_RunInTx() {
 		log.Fatal(err)
 	}
 }
+
+// Migrate applies every pending "up" migration in a directory of paired
+// *.up.sql/*.down.sql files before a service starts serving traffic.
+func ExampleMigrate() {
+	dsn := "postgres://user:pass@localhost:5432/acme"
+
+	if err := postgres.Migrate(dsn, "./migrations"); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// MigrateWithTable records applied versions in a table other than the default
+// "schema_migrations", so a service's own migrations coexist in the same
+// database as an embedded library's, each tracking its own versions.
+func ExampleMigrateWithTable() {
+	dsn := "postgres://user:pass@localhost:5432/acme"
+
+	if err := postgres.MigrateWithTable(dsn, "./migrations", "app_migrations"); err != nil {
+		log.Fatal(err)
+	}
+}
