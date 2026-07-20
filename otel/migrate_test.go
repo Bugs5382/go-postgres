@@ -1,15 +1,4 @@
-// Package otel adds optional OpenTelemetry query tracing to a go-postgres DB. It
-// wraps github.com/exaring/otelpgx, which records a span per query against the
-// global TracerProvider, and exposes it as a go-postgres Option so it plugs into
-// the same New call. Keeping it in a subpackage means the core go-postgres library
-// carries no OpenTelemetry dependency; import this only when you want it.
-//
-// InstrumentMigrate extends the same seam to postgres.Migrate and
-// postgres.MigrateWithTable: a span, a duration histogram, a count, and
-// structured, trace-correlated logs (via github.com/Bugs5382/go-log) around a
-// migration run, using the same global TracerProvider/MeterProvider as
-// WithTracing (for example set up with github.com/Bugs5382/go-otel).
-package otel
+package otel_test
 
 /*
 MIT License
@@ -33,3 +22,41 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	otelpg "github.com/Bugs5382/go-postgres/otel"
+)
+
+// Against the default no-op global providers, InstrumentMigrate still runs the
+// wrapped function and returns its result -- the span, metrics, and logging
+// seam must never gate the migration itself.
+
+func TestInstrumentMigrateSuccess(t *testing.T) {
+	t.Parallel()
+	ran := false
+	err := otelpg.InstrumentMigrate(context.Background(), "app", func() error {
+		ran = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("InstrumentMigrate() = %v, want nil", err)
+	}
+	if !ran {
+		t.Fatal("InstrumentMigrate did not call run")
+	}
+}
+
+func TestInstrumentMigratePropagatesError(t *testing.T) {
+	t.Parallel()
+	want := errors.New("migrate up: boom")
+	err := otelpg.InstrumentMigrate(context.Background(), "app", func() error {
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("InstrumentMigrate() = %v, want %v", err, want)
+	}
+}

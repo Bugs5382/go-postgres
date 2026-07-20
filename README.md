@@ -77,6 +77,29 @@ if !db.Healthy(ctx) {
 }
 ```
 
+## 🧱 Migrations
+
+`Migrate` and `MigrateWithTable` run a directory of plain SQL migrations with
+[`golang-migrate`](https://github.com/golang-migrate/migrate) -- no pool
+required, so they can run before `New` (for example, at startup or from an
+init container). The directory holds paired `*.up.sql`/`*.down.sql` files;
+`ErrNoChange` counts as success.
+
+```go
+if err := postgres.Migrate(dsn, "./migrations"); err != nil {
+	log.Fatal(err)
+}
+```
+
+`MigrateWithTable` records applied versions in a table other than the default
+`schema_migrations`, so a service's own migrations coexist in the same
+database as an embedded library's migrations, each tracking its own versions
+independently:
+
+```go
+err := postgres.MigrateWithTable(dsn, "./migrations", "app_migrations")
+```
+
 ## 📊 OpenTelemetry
 
 The optional [`otel`](./otel) subpackage installs an
@@ -89,6 +112,16 @@ global `TracerProvider` (for example with
 import otelpg "github.com/Bugs5382/go-postgres/otel"
 
 db, _ := postgres.New(ctx, dsn, otelpg.WithTracing()) // span per query
+```
+
+The same subpackage's `InstrumentMigrate` wraps a migration run with a span, a
+duration histogram, a count, and structured, trace-correlated logs (via
+[`go-log`](https://github.com/Bugs5382/go-log)):
+
+```go
+err := otelpg.InstrumentMigrate(ctx, "app", func() error {
+	return postgres.Migrate(dsn, "./migrations")
+})
 ```
 
 ## 🛠 Develop
