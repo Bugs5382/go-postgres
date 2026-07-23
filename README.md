@@ -48,6 +48,43 @@ Any other error — including one your function returns — aborts immediately
 without a retry. `Retryable(err)` reports whether an error is one of the two
 transient codes.
 
+## 🧩 Querier — a pgx-free query seam
+
+`Tx`, `Rows`, `Row`, `CommandTag`, and `ErrNoRows` re-export the matching `pgx`
+(and `pgconn`) types, and `Querier` is the minimal `Exec`/`Query`/`QueryRow`
+interface both a pool and a transaction satisfy. Build a store or repository
+against `Querier` instead of `*pgxpool.Pool` or `Tx`, and it runs unchanged
+whether it is handed the pool (`DB.Querier`) or a transaction
+(`DB.RunInTxQuerier`, the `Querier` form of `RunInTx`) — and it can depend on
+`go-postgres` alone, with no direct import of `github.com/jackc/pgx/v5`.
+
+```go
+func accountBalance(ctx context.Context, q postgres.Querier, id int) (int, error) {
+	var balance int
+	err := q.QueryRow(ctx, "SELECT balance FROM accounts WHERE id = $1", id).Scan(&balance)
+	if errors.Is(err, postgres.ErrNoRows) {
+		return 0, fmt.Errorf("account %d not found", id)
+	}
+	return balance, err
+}
+
+// Outside a transaction:
+balance, err := accountBalance(ctx, db.Querier(), id)
+
+// Inside one -- RunInTxQuerier shares RunInTx's retry loop and TxOptions:
+err = db.RunInTxQuerier(ctx, func(q postgres.Querier) error {
+	balance, err := accountBalance(ctx, q, id)
+	if err != nil {
+		return err
+	}
+	_, err = q.Exec(ctx, "UPDATE accounts SET balance = $1 WHERE id = $2", balance-100, id)
+	return err
+}, postgres.WithIsolation(pgx.Serializable))
+```
+
+A hand-written fake satisfying `Querier` needs no `pgx` import either, so a
+unit test for `accountBalance` above never touches a real database.
+
 ## 🎛 Options
 
 Every knob is a functional option, and every one has a resilient default.

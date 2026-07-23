@@ -6,6 +6,13 @@
 // a transaction and retries automatically on serialization failures (SQLSTATE
 // 40001) and deadlocks (40P01) with capped exponential backoff. The returned DB
 // exposes the underlying *pgxpool.Pool for the full pgx API.
+//
+// Tx, Rows, Row, CommandTag, and ErrNoRows re-export the matching pgx (and
+// pgconn) types, and Querier is the minimal Exec/Query/QueryRow interface both
+// a pool and a transaction satisfy. Building a store or repository against
+// Querier -- reached through DB.Querier (outside a transaction) or
+// RunInTxQuerier (inside one) -- lets that code depend on this package alone,
+// with no direct import of github.com/jackc/pgx/v5.
 package postgres
 
 /*
