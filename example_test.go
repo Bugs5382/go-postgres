@@ -25,6 +25,8 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -83,6 +85,60 @@ func ExampleDB_RunInTx() {
 			return err
 		}
 		_, err := tx.Exec(ctx, "UPDATE accounts SET balance = $1 WHERE id = $2", balance-100, 1)
+		return err
+	}, postgres.WithIsolation(pgx.Serializable))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// Build a store against Querier instead of *pgxpool.Pool, and reach it either
+// through DB.Querier (outside a transaction) or RunInTxQuerier (inside one).
+// Neither the store nor this example needs to import github.com/jackc/pgx/v5.
+func ExampleDB_Querier() {
+	ctx := context.Background()
+
+	db, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/acme")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := accountBalance(ctx, db.Querier(), 1); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// accountBalance is a store method built against postgres.Querier, so it runs
+// unchanged whether q is a plain pool (DB.Querier) or a transaction
+// (RunInTxQuerier's argument).
+func accountBalance(ctx context.Context, q postgres.Querier, id int) (int, error) {
+	var balance int
+	err := q.QueryRow(ctx, "SELECT balance FROM accounts WHERE id = $1", id).Scan(&balance)
+	if errors.Is(err, postgres.ErrNoRows) {
+		return 0, fmt.Errorf("account %d not found", id)
+	}
+	return balance, err
+}
+
+// RunInTxQuerier is RunInTx, but hands the callback a Querier instead of a
+// pgx.Tx, so the same fn can share a store's Querier-based methods with code
+// that also runs outside a transaction (see ExampleDB_Querier).
+func ExampleDB_RunInTxQuerier() {
+	ctx := context.Background()
+
+	db, err := postgres.New(ctx, "postgres://user:pass@localhost:5432/acme")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	err = db.RunInTxQuerier(ctx, func(q postgres.Querier) error {
+		balance, err := accountBalance(ctx, q, 1)
+		if err != nil {
+			return err
+		}
+		_, err = q.Exec(ctx, "UPDATE accounts SET balance = $1 WHERE id = $2", balance-100, 1)
 		return err
 	}, postgres.WithIsolation(pgx.Serializable))
 	if err != nil {

@@ -93,6 +93,11 @@ func New(ctx context.Context, dsn string, opts ...Option) (*DB, error) {
 // by this DB; do not Close it directly -- use DB.Close.
 func (db *DB) Pool() *pgxpool.Pool { return db.pool }
 
+// Querier returns the pool as a Querier, so a store or repository built
+// against the Querier seam can query outside a transaction without naming
+// *pgxpool.Pool (or, transitively, importing github.com/jackc/pgx/v5).
+func (db *DB) Querier() Querier { return db.pool }
+
 // Ping verifies a round-trip to the server within ctx, acquiring and releasing a
 // pooled connection. It returns the underlying error on failure.
 func (db *DB) Ping(ctx context.Context) error {
@@ -128,6 +133,16 @@ func (db *DB) RunInTx(ctx context.Context, fn func(pgx.Tx) error, opts ...TxOpti
 		opt(&txc)
 	}
 	return runInTx(ctx, db.pool, txc, fn)
+}
+
+// RunInTxQuerier is RunInTx, but hands fn the transaction as a Querier
+// instead of a Tx, so callers can build against the Querier seam (for
+// example a repository or store interface shared with code that also runs
+// outside a transaction via DB.Querier) without naming Tx or importing
+// github.com/jackc/pgx/v5. It delegates to RunInTx, so it shares the same
+// serialization-failure/deadlock retry loop and the same TxOptions.
+func (db *DB) RunInTxQuerier(ctx context.Context, fn func(Querier) error, opts ...TxOption) error {
+	return db.RunInTx(ctx, func(tx pgx.Tx) error { return fn(tx) }, opts...)
 }
 
 // runInTx is the pool-agnostic retry loop behind RunInTx.

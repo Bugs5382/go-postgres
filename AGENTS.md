@@ -22,6 +22,13 @@ The public surface is small and additive; keep it stable:
 - `(*DB).RunInTx(ctx, fn, ...TxOption) error` -- runs `fn` inside a transaction and retries on
   serialization_failure (SQLSTATE 40001) and deadlock_detected (40P01) with capped exponential
   backoff. `Retryable(err) bool` reports whether an error is one of those codes.
+- `Tx`, `Rows`, `Row`, `CommandTag` (type aliases) and `ErrNoRows` (var) re-export the matching pgx
+  and pgconn types, so a caller can name them without importing `github.com/jackc/pgx/v5` directly.
+  `Querier` is the minimal `Exec`/`Query`/`QueryRow` interface both a pool and a `Tx` satisfy without
+  any adapter. `(*DB).Querier() Querier` hands out the pool as a `Querier`. `(*DB).RunInTxQuerier(ctx,
+  fn func(Querier) error, ...TxOption) error` is `RunInTx`, but hands `fn` the transaction as a
+  `Querier` instead of a `Tx` -- it delegates to `RunInTx`, sharing its retry loop and `TxOption`s
+  exactly, so a store built against `Querier` runs unchanged via `Querier()` or `RunInTxQuerier`.
 - Pool options: `WithMaxConns`, `WithMinConns`, `WithMaxConnLifetime`, `WithMaxConnIdleTime`,
   `WithHealthCheckPeriod`, `WithConnectTimeout`, `WithTxRetry(attempts, base, max)`, and
   `WithTracer` (a pgx `QueryTracer`, so the core carries no OpenTelemetry dependency).
@@ -38,8 +45,9 @@ The public surface is small and additive; keep it stable:
 
 ## Layout
 
-- `postgres.go` - `DB`, `New`, the `Pool`/`Ping`/`Healthy`/`Close` methods, `RunInTx`, and the
-  serialization-failure retry loop.
+- `postgres.go` - `DB`, `New`, the `Pool`/`Querier`/`Ping`/`Healthy`/`Close` methods, `RunInTx`/
+  `RunInTxQuerier`, and the serialization-failure retry loop.
+- `querier.go` - the `Tx`/`Rows`/`Row`/`CommandTag` aliases, `ErrNoRows`, and the `Querier` interface.
 - `options.go` - the `Option`/`TxOption` types, all `With*` options, the resilient defaults, and the
   mapping onto the `pgxpool.Config`.
 - `migrate.go` - `Migrate`, `MigrateWithTable`, and the `golang-migrate` wiring behind them.
@@ -65,3 +73,7 @@ The public surface is small and additive; keep it stable:
   `QueryTracer` seam (`WithTracer`) or the `otel` subpackage.
 - `RunInTx` only retries on 40001/40P01; any other error (including a caller error from `fn`) fails
   fast without a retry. Keep that discrimination in `Retryable`.
+- `RunInTxQuerier` exists *alongside* `RunInTx`, not in place of it: Go's function types are
+  invariant, so retyping `RunInTx`'s callback from `Tx` to `Querier` would break every existing
+  caller that names the parameter type. Add new capabilities as new methods for the same reason;
+  don't retype an existing one.
