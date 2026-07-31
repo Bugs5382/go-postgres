@@ -44,6 +44,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres" // registers the "postgres" database driver
@@ -66,6 +67,10 @@ func Migrate(dsn, migrationsDir string) error {
 // empty table falls back to the default.
 func MigrateWithTable(dsn, migrationsDir, table string) error {
 	dsn, err := withMigrationsTable(dsn, table)
+	if err != nil {
+		return err
+	}
+	dsn, err = withSearchPath(dsn)
 	if err != nil {
 		return err
 	}
@@ -95,6 +100,50 @@ func withMigrationsTable(dsn, table string) (string, error) {
 	}
 	q := u.Query()
 	q.Set("x-migrations-table", table)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// withSearchPath pins the migration connection's search_path so golang-migrate
+// can resolve the target schema deterministically.
+//
+// golang-migrate's postgres driver runs "SELECT CURRENT_SCHEMA()" to decide
+// which schema to migrate. That returns NULL -- aborting the run with "no
+// schema" -- whenever the connection's search_path is unset, which happens
+// routinely behind PgBouncer in transaction pooling mode: a pooled server
+// connection carries whatever search_path the previous client left it, and
+// PgBouncer does not reset it between transactions. Pinning search_path on the
+// connection removes the dependency on that pooled session state (and lets the
+// migration SQL create objects in the intended schema).
+//
+// The value is carried in libpq's "options" startup field (-c search_path=...)
+// rather than a bare "search_path" query parameter, because PgBouncer forwards
+// "options" but rejects unknown startup parameters -- a bare search_path would
+// fail the connection outright. An existing search_path already in "options" is
+// left untouched; a "search_path" query parameter is honoured (folded into
+// "options"); otherwise the schema defaults to "public".
+func withSearchPath(dsn string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("postgres: parse dsn: %w", err)
+	}
+	q := u.Query()
+
+	if strings.Contains(q.Get("options"), "search_path") {
+		return dsn, nil
+	}
+
+	schema := q.Get("search_path")
+	if schema == "" {
+		schema = "public"
+	}
+	q.Del("search_path")
+
+	setting := "-c search_path=" + schema
+	if opts := strings.TrimSpace(q.Get("options")); opts != "" {
+		setting = opts + " " + setting
+	}
+	q.Set("options", setting)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
