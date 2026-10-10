@@ -38,6 +38,10 @@ The public surface is small and additive; keep it stable:
   directory of paired `*.up.sql`/`*.down.sql` files with `golang-migrate`; `ErrNoChange` is success.
   `MigrateWithTable` sets a custom `x-migrations-table` so two migration sets can share a database.
   Neither needs a `DB`/pool, so either can run before `New`.
+- `WaitFor(ctx, fn, ...WaitOption) error` -- retries `fn` (a `Migrate` or `New` call at startup)
+  while its error is `Transient(err) bool` (network failures and SQLSTATE class 08, 57P01-57P03,
+  53300), with capped exponential backoff and jitter; any other error returns at once. Options:
+  `WithWaitBackoff(base, max)`, `WithRetryHook(func(attempt, err, delay))`.
 - The `otel` subpackage adds OpenTelemetry tracing via `WithTracing` (built on `exaring/otelpgx`),
   keeping the OpenTelemetry dependency out of the core, plus `InstrumentMigrate`, which wraps a
   migration run with a span, a duration histogram, a count (via `go-otel`), and trace-correlated
@@ -51,6 +55,7 @@ The public surface is small and additive; keep it stable:
 - `options.go` - the `Option`/`TxOption` types, all `With*` options, the resilient defaults, and the
   mapping onto the `pgxpool.Config`.
 - `migrate.go` - `Migrate`, `MigrateWithTable`, and the `golang-migrate` wiring behind them.
+- `wait.go` - `WaitFor`, `Transient` and the startup retry options.
 - `otel/` - the optional OpenTelemetry adapter (`WithTracing`, `InstrumentMigrate`), a separate
   import path.
 - `doc.go` - package doc.
