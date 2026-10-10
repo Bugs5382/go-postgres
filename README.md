@@ -137,6 +137,28 @@ independently:
 err := postgres.MigrateWithTable(dsn, "./migrations", "app_migrations")
 ```
 
+## ⏳ Waiting for the database at startup
+
+A service often starts before its database answers: after a reboot, DNS or
+PostgreSQL may still be coming up. `WaitFor` retries a step while its error is
+`Transient` (refused or reset connections, failed DNS lookups, timeouts, and the
+SQLSTATEs a starting, stopping or full server sends: class 08, 57P01-57P03,
+53300), with capped exponential backoff and jitter. Anything else, such as a
+wrong password or a failing migration, is returned at once, so a real
+misconfiguration still stops the boot.
+
+```go
+err := postgres.WaitFor(ctx, func(ctx context.Context) error {
+	return postgres.Migrate(dsn, "./migrations")
+}, postgres.WithRetryHook(func(attempt int, err error, delay time.Duration) {
+	logger.Warn("postgres not reachable yet, retrying", "attempt", attempt, "in", delay, "err", err)
+}))
+```
+
+`WithWaitBackoff(base, max)` tunes the waits (default 500ms doubling to 15s).
+`WaitFor` stops when `ctx` ends, returning an error that wraps both the context
+error and the last attempt's.
+
 ## 📊 OpenTelemetry
 
 The optional [`otel`](./otel) subpackage installs an
