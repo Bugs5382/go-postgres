@@ -40,8 +40,9 @@ import (
 // distinct instrumentation scope can start their own span and pass its ctx in.
 const tracerName = "github.com/Bugs5382/go-postgres/otel"
 
-// InstrumentMigrate wraps a migration run -- typically postgres.Migrate or
-// postgres.MigrateWithTable -- with the same observability seam WithTracing
+// InstrumentMigrate wraps a migration run -- typically postgres.Migrate,
+// postgres.MigrateWithTable or their fs.FS forms (postgres.MigrateFS,
+// postgres.MigrateFSWithTable) -- with the same observability seam WithTracing
 // gives query traffic: a "postgres.migrate" span, a duration histogram and a
 // count (both built with github.com/Bugs5382/go-otel's instrument
 // constructors) off the global MeterProvider, and structured,

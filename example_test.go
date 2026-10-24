@@ -25,6 +25,7 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"log"
@@ -150,6 +151,17 @@ func ExampleDB_RunInTxQuerier() {
 // *.up.sql/*.down.sql files before a service starts serving traffic.
 func ExampleMigrate() {
 	if err := postgres.Migrate("postgres://user:pass@localhost:5432/acme", "./migrations"); err != nil {
+		log.Fatal(err)
+	}
+}
+
+//go:embed testdata/migrations
+var migrations embed.FS
+
+// MigrateFS runs migrations embedded in the binary with embed.FS, so a
+// service needs no migrations directory on disk at run time.
+func ExampleMigrateFS() {
+	if err := postgres.MigrateFS("postgres://user:pass@localhost:5432/acme", migrations, "testdata/migrations"); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -37,7 +37,10 @@ The public surface is small and additive; keep it stable:
 - `Migrate(dsn, migrationsDir) error` / `MigrateWithTable(dsn, migrationsDir, table) error` -- run a
   directory of paired `*.up.sql`/`*.down.sql` files with `golang-migrate`; `ErrNoChange` is success.
   `MigrateWithTable` sets a custom `x-migrations-table` so two migration sets can share a database.
-  Neither needs a `DB`/pool, so either can run before `New`.
+  `MigrateFS(dsn, fsys, dir) error` / `MigrateFSWithTable(dsn, fsys, dir, table) error` do the same
+  from a directory inside any `fs.FS` (an `embed.FS`, for migrations shipped in the binary) on
+  golang-migrate's `iofs` source; the directory forms wrap them through `os.DirFS` (an empty dir
+  still means the working directory). None needs a `DB`/pool, so any of them can run before `New`.
 - `WaitFor(ctx, fn, ...WaitOption) error` -- retries `fn` (a `Migrate` or `New` call at startup)
   while its error is `Transient(err) bool` (network failures and SQLSTATE class 08, 57P01-57P03,
   53300), with capped exponential backoff and jitter; any other error returns at once. Options:
@@ -54,7 +57,10 @@ The public surface is small and additive; keep it stable:
 - `querier.go` - the `Tx`/`Rows`/`Row`/`CommandTag` aliases, `ErrNoRows`, and the `Querier` interface.
 - `options.go` - the `Option`/`TxOption` types, all `With*` options, the resilient defaults, and the
   mapping onto the `pgxpool.Config`.
-- `migrate.go` - `Migrate`, `MigrateWithTable`, and the `golang-migrate` wiring behind them.
+- `migrate.go` - `Migrate`, `MigrateWithTable`, `MigrateFS`, `MigrateFSWithTable`, and the
+  `golang-migrate` wiring behind them.
+- `testdata/migrations/` - a tiny embedded migration set used by the `MigrateFS` example and the
+  integration test.
 - `wait.go` - `WaitFor`, `Transient` and the startup retry options.
 - `otel/` - the optional OpenTelemetry adapter (`WithTracing`, `InstrumentMigrate`), a separate
   import path.

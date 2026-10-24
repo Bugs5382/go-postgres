@@ -24,9 +24,16 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
 import (
+	"io/fs"
 	"strings"
+	"sync"
 	"testing"
+	"testing/fstest"
 )
+
+// unreachableDSN points at a port nothing listens on, so a migration run that
+// gets past its source fails on the dial without needing a live server.
+const unreachableDSN = "postgres://acme@127.0.0.1:1/acme?sslmode=disable&connect_timeout=1"
 
 func TestWithMigrationsTableEmptyLeavesDSNUnchanged(t *testing.T) {
 	t.Parallel()
@@ -83,5 +90,76 @@ func TestMigrateWithTableMissingDirectory(t *testing.T) {
 	t.Parallel()
 	if err := MigrateWithTable(testDSN, "/no/such/migrations/dir", "app_migrations"); err == nil {
 		t.Fatal("MigrateWithTable() error = nil, want an error for a missing migrations directory")
+	}
+}
+
+func TestMigrateFSMissingDirectory(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{}
+	if err := MigrateFS(testDSN, fsys, "migrations"); err == nil {
+		t.Fatal("MigrateFS() error = nil, want an error for a directory missing from the fs.FS")
+	}
+}
+
+func TestMigrateFSWithTableMissingDirectory(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{}
+	if err := MigrateFSWithTable(testDSN, fsys, "migrations", "app_migrations"); err == nil {
+		t.Fatal("MigrateFSWithTable() error = nil, want an error for a directory missing from the fs.FS")
+	}
+}
+
+// recordingFS is an fs.FS that remembers every name it was asked to open, so a
+// test can prove the migration source was read from it rather than from disk.
+type recordingFS struct {
+	fs.FS
+	mu     sync.Mutex
+	opened []string
+}
+
+func (r *recordingFS) Open(name string) (fs.File, error) {
+	r.mu.Lock()
+	r.opened = append(r.opened, name)
+	r.mu.Unlock()
+	return r.FS.Open(name)
+}
+
+func TestMigrateFSReadsMigrationsFromFS(t *testing.T) {
+	t.Parallel()
+	fsys := &recordingFS{FS: fstest.MapFS{
+		"db/migrations/1_widgets.up.sql":   {Data: []byte("CREATE TABLE widgets (id serial PRIMARY KEY);")},
+		"db/migrations/1_widgets.down.sql": {Data: []byte("DROP TABLE widgets;")},
+	}}
+
+	// Nothing listens on the dsn, so the run must fail -- but only after the
+	// source was opened from fsys.
+	if err := MigrateFS(unreachableDSN, fsys, "db/migrations"); err == nil {
+		t.Fatal("MigrateFS() error = nil, want a dial error for an unreachable server")
+	}
+
+	fsys.mu.Lock()
+	defer fsys.mu.Unlock()
+	found := false
+	for _, name := range fsys.opened {
+		if name == "db/migrations" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("MigrateFS() opened %v from the fs.FS, want it to read %q", fsys.opened, "db/migrations")
+	}
+}
+
+// An empty migrationsDir has always meant the working directory (golang-migrate's
+// file source resolves an empty path that way); routing Migrate through an
+// fs.FS must keep that, rather than failing on an empty os.DirFS root.
+func TestMigrateEmptyDirectoryMeansWorkingDirectory(t *testing.T) {
+	t.Parallel()
+	err := Migrate(unreachableDSN, "")
+	if err == nil {
+		t.Fatal("Migrate() error = nil, want a dial error for an unreachable server")
+	}
+	if strings.Contains(err.Error(), "open migrator: open") || strings.Contains(err.Error(), "empty root") {
+		t.Errorf("Migrate(dsn, \"\") error = %v, want the source to open and the dial to fail", err)
 	}
 }

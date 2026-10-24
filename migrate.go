@@ -23,22 +23,28 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-// Migrate and MigrateWithTable run a directory of plain SQL migrations against
-// a PostgreSQL database using github.com/golang-migrate/migrate/v4 (the
-// "postgres" database driver and the "file" source driver). They are a thin,
-// opinionated seam over golang-migrate for the common case: apply every
-// pending "up" migration and return. Reaching for golang-migrate directly is
-// still fine for anything more advanced (Down, Steps, Version, a different
-// source such as an embedded filesystem, and so on) -- these two functions
-// exist only to remove the small amount of boilerplate (opening a migrator,
-// treating ErrNoChange as success, closing it) most services repeat.
+// Migrate, MigrateWithTable, MigrateFS and MigrateFSWithTable run a set of
+// plain SQL migrations against a PostgreSQL database using
+// github.com/golang-migrate/migrate/v4 (the "postgres" database driver and
+// the "iofs" source). They are a thin, opinionated seam over golang-migrate
+// for the common case: apply every pending "up" migration and return.
+// Reaching for golang-migrate directly is still fine for anything more
+// advanced (Down, Steps, Version, and so on) -- these functions exist only to
+// remove the small amount of boilerplate (opening a migrator, treating
+// ErrNoChange as success, closing it) most services repeat.
+//
+// Migrate and MigrateWithTable read a directory on disk. MigrateFS and
+// MigrateFSWithTable read a directory inside any fs.FS, so migrations
+// embedded in the binary with embed.FS run without being unpacked first. The
+// directory forms are wrappers over the fs.FS forms through os.DirFS, which
+// is also how golang-migrate's own "file" source reads a directory.
 //
 // The migrations directory must contain paired "*.up.sql" / "*.down.sql"
 // files named "<version>_<description>.up.sql" / ".down.sql", golang-migrate's
-// standard layout. Migrate and MigrateWithTable open their own database
-// connection for the migration run and close it before returning; they do not
-// use a DB built by New, so they can run before a pool exists (for example, in
-// a startup script or an init container).
+// standard layout. Every function here opens its own database connection for
+// the migration run and closes it before returning; none uses a DB built by
+// New, so they can run before a pool exists (for example, in a startup script
+// or an init container).
 //
 // Migrations require a direct (session) PostgreSQL connection and MUST NOT run
 // through a transaction-pooled PgBouncer. golang-migrate relies on session
@@ -50,11 +56,13 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"os"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres" // registers the "postgres" database driver
-	_ "github.com/golang-migrate/migrate/v4/source/file"       // registers the "file" source driver
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
 // Migrate runs every pending "up" migration in migrationsDir against dsn and
@@ -72,13 +80,47 @@ func Migrate(dsn, migrationsDir string) error {
 // set tracks its own versions and neither skips the other's migrations. An
 // empty table falls back to the default.
 func MigrateWithTable(dsn, migrationsDir, table string) error {
+	if migrationsDir == "" {
+		// golang-migrate's file source reads an empty path as the working
+		// directory; os.DirFS rejects an empty root, so keep the old meaning.
+		migrationsDir = "."
+	}
+	return MigrateFSWithTable(dsn, os.DirFS(migrationsDir), ".", table)
+}
+
+// MigrateFS is Migrate, but reads the migrations from dir inside fsys instead
+// of from a directory on disk. fsys can be any fs.FS -- most usefully an
+// embed.FS, so a service ships its migrations inside its binary:
+//
+//	//go:embed migrations
+//	var migrations embed.FS
+//
+//	err := postgres.MigrateFS(dsn, migrations, "migrations")
+//
+// dir is a slash-separated path within fsys, as fs.ValidPath defines it; use
+// "." when the migrations sit at the root of fsys.
+func MigrateFS(dsn string, fsys fs.FS, dir string) error {
+	return MigrateFSWithTable(dsn, fsys, dir, "")
+}
+
+// MigrateFSWithTable is MigrateFS, but records applied versions in table
+// instead of golang-migrate's default "schema_migrations", exactly as
+// MigrateWithTable does for a directory on disk. An empty table falls back to
+// the default.
+func MigrateFSWithTable(dsn string, fsys fs.FS, dir, table string) error {
 	dsn, err := withMigrationsTable(dsn, table)
 	if err != nil {
 		return err
 	}
 
-	m, err := migrate.New("file://"+migrationsDir, dsn)
+	src, err := iofs.New(fsys, dir)
 	if err != nil {
+		return fmt.Errorf("postgres: open migrator: %w", err)
+	}
+
+	m, err := migrate.NewWithSourceInstance("iofs", src, dsn)
+	if err != nil {
+		_ = src.Close()
 		return fmt.Errorf("postgres: open migrator: %w", err)
 	}
 	defer func() { _, _ = m.Close() }()
