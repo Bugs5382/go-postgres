@@ -4,10 +4,10 @@
 // the same New call. Keeping it in a subpackage means the core go-postgres library
 // carries no OpenTelemetry dependency; import this only when you want it.
 //
-// InstrumentMigrate extends the same seam to postgres.Migrate and
-// postgres.MigrateWithTable: a span, a duration histogram, a count, and
-// structured, trace-correlated logs (via github.com/Bugs5382/go-log) around a
-// migration run, using the same global TracerProvider/MeterProvider as
+// InstrumentMigrate extends the same seam to postgres.Migrate,
+// postgres.MigrateWithTable and their fs.FS forms: a span, a duration
+// histogram, a count, and structured, trace-correlated logs (via
+// github.com/Bugs5382/go-log) around a migration run, using the same global TracerProvider/MeterProvider as
 // WithTracing (for example set up with github.com/Bugs5382/go-otel).
 package otel
 

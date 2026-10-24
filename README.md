@@ -137,6 +137,20 @@ independently:
 err := postgres.MigrateWithTable(dsn, "./migrations", "app_migrations")
 ```
 
+`MigrateFS` and `MigrateFSWithTable` take the migrations from any `fs.FS`
+instead of a path on disk. With `embed.FS` the migrations ship inside the
+binary, so there is nothing to unpack or copy into the image:
+
+```go
+//go:embed migrations
+var migrations embed.FS
+
+err := postgres.MigrateFS(dsn, migrations, "migrations")
+```
+
+The directory forms are wrappers over these through `os.DirFS`, so both read
+migrations the same way.
+
 ## ⏳ Waiting for the database at startup
 
 A service often starts before its database answers: after a reboot, DNS or

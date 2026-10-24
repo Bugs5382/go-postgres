@@ -27,6 +27,7 @@ OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import (
 	"context"
+	"embed"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,6 +102,48 @@ func TestIntegrationMigrate(t *testing.T) {
 	defer db.Close()
 
 	for _, table := range []string{"widgets", "schema_migrations", "gadgets", "gadgets_migrations"} {
+		var exists bool
+		err := db.Pool().QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table,
+		).Scan(&exists)
+		if err != nil {
+			t.Fatalf("check %s exists: %v", table, err)
+		}
+		if !exists {
+			t.Errorf("table %q was not created", table)
+		}
+	}
+}
+
+//go:embed testdata/migrations
+var embeddedMigrations embed.FS
+
+// TestIntegrationMigrateFS runs a migration set embedded in the test binary
+// with embed.FS against a real PostgreSQL, through MigrateFS and then
+// MigrateFSWithTable, and checks the second run of the same set is a no-op.
+// Run it the same way as TestIntegrationRoundTrip.
+func TestIntegrationMigrateFS(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("set POSTGRES_DSN to run the integration test")
+	}
+	ctx := context.Background()
+
+	if err := MigrateFSWithTable(dsn, embeddedMigrations, "testdata/migrations", "sprockets_migrations"); err != nil {
+		t.Fatalf("MigrateFSWithTable: %v", err)
+	}
+	// Already current: ErrNoChange must come back as success.
+	if err := MigrateFSWithTable(dsn, embeddedMigrations, "testdata/migrations", "sprockets_migrations"); err != nil {
+		t.Fatalf("MigrateFSWithTable (second run): %v", err)
+	}
+
+	db, err := New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer db.Close()
+
+	for _, table := range []string{"sprockets", "sprockets_migrations"} {
 		var exists bool
 		err := db.Pool().QueryRow(ctx,
 			"SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1)", table,
